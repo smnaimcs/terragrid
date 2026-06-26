@@ -1,0 +1,182 @@
+# 1. Tables
+
+## User
+
+| Column        | Type                  |
+| ------------- | --------------------- |
+| id            | UUID / BIGINT         |
+| name          | VARCHAR               |
+| email         | VARCHAR               |
+| password_hash | VARCHAR               |
+| role          | ENUM (ADMIN, MANAGER) |
+| is_active     | BOOLEAN               |
+| created_at    | TIMESTAMP             |
+| updated_at    | TIMESTAMP             |
+
+**PK:** `id`
+
+---
+
+## Warehouse
+
+| Column     | Type          |
+| ---------- | ------------- |
+| id         | UUID / BIGINT |
+| name       | VARCHAR       |
+| location   | VARCHAR       |
+| is_active  | BOOLEAN       |
+| created_at | TIMESTAMP     |
+| updated_at | TIMESTAMP     |
+
+**PK:** `id`
+
+---
+
+## Product
+
+| Column      | Type          |
+| ----------- | ------------- |
+| id          | UUID / BIGINT |
+| sku         | VARCHAR       |
+| name        | VARCHAR       |
+| description | TEXT          |
+| unit        | VARCHAR       |
+| is_active   | BOOLEAN       |
+| created_at  | TIMESTAMP     |
+| updated_at  | TIMESTAMP     |
+
+**PK:** `id`
+
+---
+
+## Inventory
+
+| Column       | Type          |
+| ------------ | ------------- |
+| id           | UUID / BIGINT |
+| warehouse_id | FK            |
+| product_id   | FK            |
+| quantity     | INTEGER       |
+| updated_at   | TIMESTAMP     |
+
+**PK:** `id`
+
+---
+
+## StockTransaction
+
+| Column           | Type                                                  |
+| ---------------- | ----------------------------------------------------- |
+| id               | UUID / BIGINT                                         |
+| product_id       | FK                                                    |
+| warehouse_id     | FK                                                    |
+| user_id          | FK                                                    |
+| transaction_type | ENUM (IN, OUT, TRANSFER_IN, TRANSFER_OUT, ADJUSTMENT) |
+| quantity         | INTEGER                                               |
+| reference_id     | UUID                                                  |
+| note             | TEXT                                                  |
+| created_at       | TIMESTAMP                                             |
+
+**PK:** `id`
+
+---
+
+# 2. Foreign Keys
+
+* `Inventory.warehouse_id → Warehouse.id`
+* `Inventory.product_id → Product.id`
+* `StockTransaction.product_id → Product.id`
+* `StockTransaction.warehouse_id → Warehouse.id`
+* `StockTransaction.user_id → User.id`
+
+---
+
+# 3. Relationships
+
+* User **1 → N** StockTransaction
+* Warehouse **1 → N** Inventory
+* Product **1 → N** Inventory
+* Warehouse **1 → N** StockTransaction
+* Product **1 → N** StockTransaction
+
+---
+
+# 4. Design Questions
+
+### Prevent duplicate inventory rows?
+
+Add a **UNIQUE constraint** on:
+
+```text
+(warehouse_id, product_id)
+```
+
+Only one inventory record per product per warehouse.
+
+---
+
+### Where should "enough stock" be checked?
+
+**Both.**
+
+* **Java:** Business validation and user-friendly errors.
+* **Database:** Final protection inside a transaction to prevent race conditions.
+
+---
+
+### Store inventory quantity or calculate it?
+
+**Store `quantity` in Inventory.**
+
+* Faster reads.
+* Transactions remain the audit history.
+* Inventory acts as the current snapshot.
+
+---
+
+### Warehouse transfer of 50 units
+
+**Two transaction rows.**
+
+1. `TRANSFER_OUT` from Warehouse A (-50)
+2. `TRANSFER_IN` to Warehouse B (+50)
+
+Both share the same `reference_id`.
+
+---
+
+### Product/Warehouse deletion
+
+Use **soft delete** (`is_active`).
+
+Reasons:
+
+* Preserve audit history.
+* Maintain foreign key integrity.
+* Never lose historical transactions.
+
+---
+
+### Recommended Indexes
+
+| Index                                          | Reason                                     |
+| ---------------------------------------------- | ------------------------------------------ |
+| `Product.sku` (UNIQUE)                         | Fast product lookup                        |
+| `User.email` (UNIQUE)                          | Login                                      |
+| `Inventory(warehouse_id, product_id)` (UNIQUE) | Prevent duplicates & fast inventory lookup |
+| `StockTransaction(product_id)`                 | Product history                            |
+| `StockTransaction(warehouse_id)`               | Warehouse history                          |
+| `StockTransaction(created_at)`                 | Reports by date                            |
+| `StockTransaction(reference_id)`               | Group transfer records                     |
+
+---
+
+# Final Design Decisions
+
+* Current stock stored in **Inventory**.
+* Complete audit trail stored in **StockTransaction**.
+* Warehouse transfers create **2 transaction rows** linked by `reference_id`.
+* Use **soft deletes** for Products and Warehouses.
+* Enforce uniqueness with **(warehouse_id, product_id)**.
+* Validate stock in **both Java and the database** for correctness and concurrency safety.
+

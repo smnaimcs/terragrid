@@ -1,3 +1,3 @@
 # Tasks  
-[ x ] docs - directory organization
+[ x ] docs - directory organization  
 [   ] docs - database schema
