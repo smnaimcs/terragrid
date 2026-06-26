@@ -1,0 +1,117 @@
+## 1. UUID vs BIGINT
+
+**Decision: BIGINT**
+
+**Reasoning:**
+
+* Single PostgreSQL database.
+* No distributed ID generation needed.
+* Better insert performance (sequential IDs).
+* Smaller indexes (8 bytes vs. 16 bytes).
+* Better cache locality and B-tree performance.
+
+If later the API needs opaque identifiers, I'd add a separate `public_id (UUID)` column rather than replacing the primary key.
+
+---
+
+## 2. Signed vs. Unsigned Quantities
+
+**Decision: Signed quantities.**
+
+Example:
+
+| Type         | Quantity |
+| ------------ | -------: |
+| IN           |      +50 |
+| OUT          |      -30 |
+| TRANSFER_IN  |      +50 |
+| TRANSFER_OUT |      -50 |
+| ADJUSTMENT   |       ±N |
+
+**Reasoning:**
+
+* `SUM(quantity)` always produces the net stock change.
+* Simpler SQL for reports and reconciliation.
+* Avoids duplicating business logic ("OUT means negative") across queries.
+* `transaction_type` becomes descriptive metadata rather than part of the arithmetic.
+
+I would change my original design to this.
+
+---
+
+## 3. Inventory–Transaction Consistency
+
+**Decision: Inventory is a denormalized cache maintained transactionally.**
+
+For every stock operation:
+
+1. Begin a database transaction.
+2. Validate business rules (e.g., sufficient stock).
+3. Insert `StockTransaction`.
+4. Update `Inventory.quantity`.
+5. Commit.
+
+If any step fails, the entire transaction rolls back.
+
+Additionally:
+
+* Run a periodic reconciliation job that compares `Inventory.quantity` with `SUM(StockTransaction.quantity)` and raises alerts if they differ.
+
+This gives:
+
+* Strong consistency during normal operations.
+* Safety net against bugs or manual database changes.
+
+---
+
+## 4. `reference_type`
+
+**Decision: Add it now (cheap insurance).**
+
+Example:
+
+| reference_id | reference_type |
+| ------------ | -------------- |
+| abc-123      | TRANSFER       |
+| def-456      | PURCHASE_ORDER |
+| xyz-789      | CYCLE_COUNT    |
+
+**Reasoning:**
+
+* Very low implementation cost.
+* Improves extensibility.
+* Makes integrations and reporting clearer.
+* Avoids overloading `reference_id` with ambiguous meaning.
+
+---
+
+## 5. Soft Delete + Uniqueness
+
+**Decision: Use soft delete with partial unique indexes.**
+
+Examples:
+
+* `Product.sku` unique **only for active products**.
+* `User.email` unique **only for active users**.
+* `Warehouse.name` (if required) unique **only for active warehouses**.
+
+This allows:
+
+* Historical records to remain intact.
+* Reusing identifiers after retirement if business rules permit.
+* Queries to return only active records by default.
+
+---
+
+# Final Decisions
+
+| Question              | Decision                                       |
+| --------------------- | ---------------------------------------------- |
+| Primary Key           | **BIGINT**                                     |
+| Quantity              | **Signed integers**                            |
+| Inventory consistency | **Single DB transaction + reconciliation job** |
+| `reference_type`      | **Add now**                                    |
+| Soft delete           | **`is_active` + partial unique indexes**       |
+
+I believe this design best fits TerraGrid's current scope while leaving clear paths for future growth without unnecessary complexity.
+
