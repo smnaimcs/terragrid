@@ -1,0 +1,340 @@
+## Analysis
+
+For TerraGrid, this is not merely a question of directory organization. It is a question of how the codebase will evolve as features like inventory transfers, stock reservations, audit logging, authentication, warehouses, and reporting become increasingly interconnected.
+
+---
+
+## 1. What problem does each approach solve?
+
+### Option A — Package by Layer
+
+```
+controller/
+service/
+repository/
+model/
+dto/
+```
+
+### Problems it solves
+
+Layer-based packaging optimizes **technical organization**.
+
+It answers the question:
+
+> "Where are all my controllers?"
+> "Where are all my repositories?"
+
+This is excellent when:
+
+* the project is small
+* developers are still learning the framework
+* there are only a handful of business concepts
+* every CRUD endpoint looks similar
+
+A new Spring developer immediately understands the layout because it mirrors Spring's architecture. Layering also reinforces separation of concerns (web, business logic, persistence). ([Chanh Le][1])
+
+---
+
+### Option B — Package by Feature
+
+```
+product/
+warehouse/
+inventory/
+auth/
+```
+
+This solves a completely different problem.
+
+Instead of organizing by **technical role**, it organizes by **business capability**.
+
+A developer working on inventory opens only
+
+```
+inventory/
+```
+
+and finds
+
+```
+InventoryController
+InventoryService
+InventoryRepository
+InventoryMapper
+InventoryDTO
+InventoryValidator
+```
+
+Everything required to understand one feature lives together.
+
+This improves:
+
+* locality
+* cohesion
+* feature ownership
+* onboarding
+* refactoring
+
+Large codebases tend to evolve feature-by-feature rather than layer-by-layer, so this organization aligns with how changes actually happen. ([Philipp Hauer's Blog][2])
+
+---
+
+# 2. What problem does each approach create?
+
+## Package by Layer
+
+As features grow, implementing one business operation requires jumping across many directories.
+
+Example:
+
+Implement "Transfer inventory atomically."
+
+You touch
+
+```
+controller/
+service/
+repository/
+model/
+dto/
+exception/
+config/
+```
+
+Nothing about the folder structure tells you these files belong to the same feature.
+
+Over time:
+
+* Service package grows to 40+ classes.
+* Controller package grows to dozens of endpoints.
+* Repository package becomes one long list.
+* Merge conflicts increase.
+* Developers accidentally reuse unrelated services because everything is globally visible.
+
+This lowers cohesion while increasing coupling. ([Philipp Hauer's Blog][2])
+
+---
+
+## Package by Feature
+
+Feature packaging introduces different problems.
+
+Some concerns naturally span every feature:
+
+* security
+* configuration
+* exception handling
+* logging
+* utilities
+
+Those cannot reasonably live inside one feature.
+
+Another challenge is deciding feature boundaries.
+
+Should
+
+```
+InventoryTransfer
+```
+
+belong to
+
+```
+inventory
+```
+
+or
+
+```
+warehouse
+```
+
+Poor boundaries can simply move the coupling problem elsewhere.
+
+Feature packaging therefore requires stronger architectural discipline than layered packaging. ([Chanh Le][1])
+
+---
+
+# 3. At what point does package-by-layer become unmaintainable?
+
+There is no magic number of classes.
+
+The warning sign is **change locality**.
+
+If implementing one feature consistently requires editing files scattered across six or seven packages, the organization is no longer helping.
+
+For example:
+
+Inventory transfer
+
+↓
+
+```
+InventoryController
+TransferService
+WarehouseRepository
+InventoryRepository
+AuditService
+TransferDTO
+TransactionConfig
+```
+
+Each file sits in a different directory.
+
+The developer mentally reconstructs the feature every time.
+
+For TerraGrid, I believe this threshold would be reached around:
+
+* 8–10 business domains
+* 40–60 service classes
+* multiple developers working simultaneously
+* audit logging
+* authentication
+* warehouse synchronization
+* reporting
+* notifications
+
+At that point, the service and controller packages become long alphabetical lists rather than meaningful structure.
+
+---
+
+# 4. At what point does package-by-feature become necessary?
+
+Package-by-feature becomes worthwhile when the **business domain is larger than the technical framework**.
+
+TerraGrid is already moving in that direction.
+
+It contains concepts such as
+
+* Products
+* Warehouses
+* Inventory
+* Transfers
+* Audit Logs
+* Users
+* Roles
+* Authentication
+* Reports
+
+These are genuine business modules.
+
+Each will continue growing independently.
+
+That is exactly when feature packaging begins paying dividends.
+
+---
+
+# 5. Which would a senior engineer choose for TerraGrid?
+
+For **this** project, I would choose **package by feature**.
+
+Not because it is fashionable.
+
+Because TerraGrid is fundamentally a **business application**, not a CRUD tutorial.
+
+The major engineering effort will revolve around domain behavior:
+
+* atomic warehouse transfers
+* stock consistency
+* reservation logic
+* audit history
+* authorization
+* reporting
+
+Those are feature-centric concerns.
+
+Senior engineers generally optimize for **how software changes over time**, not how it looks on day one. Organizing around cohesive business capabilities tends to make future modifications more localized and easier to reason about. ([Philipp Hauer's Blog][2])
+
+---
+
+# 6. Is there a hybrid approach?
+
+Yes.
+
+In fact, this is what I would recommend.
+
+```
+com.terragrid
+
+config/
+security/
+common/
+shared/
+exception/
+
+product/
+    controller/
+    service/
+    repository/
+    entity/
+    dto/
+
+warehouse/
+    controller/
+    service/
+    repository/
+    entity/
+
+inventory/
+    controller/
+    service/
+    repository/
+    entity/
+
+transfer/
+audit/
+report/
+auth/
+```
+
+Notice the difference.
+
+Top level is **feature**.
+
+Inside each feature is **layer**.
+
+This preserves Spring's familiar layering while keeping related code physically together.
+
+Shared infrastructure stays outside the features because it truly is cross-cutting.
+
+---
+
+# 7. Decision for TerraGrid
+
+I would adopt the **hybrid feature-first structure**.
+
+Example:
+
+```
+com.terragrid
+
+shared/
+config/
+security/
+exception/
+
+product/
+warehouse/
+inventory/
+transfer/
+audit/
+report/
+auth/
+```
+
+Each feature contains its own controller, service, repository, DTOs, mappers, and validators.
+
+### Reason 1 — Inventory operations are the core of TerraGrid
+
+The defining capability of TerraGrid is not simply storing products—it is maintaining correct inventory state across warehouses with atomic transfers and auditability. Implementing or debugging those workflows will involve controllers, services, repositories, DTOs, validation, and transactional logic together. Keeping those artifacts within an `inventory` or `transfer` package minimizes the cognitive overhead of tracing a business operation through the codebase.
+
+### Reason 2 — The project is expected to grow in business capabilities
+
+TerraGrid already includes or anticipates modules for products, warehouses, inventory, authentication, reporting, and audit trails. These modules will evolve at different rates. A feature-first structure allows one team member to work largely within `report/` while another works in `inventory/`, reducing accidental coupling and merge conflicts. It also makes it easier to extract a feature into its own module or service in the future if scaling requirements change.
+
+In short, for a production-quality logistics platform like TerraGrid, **organize the project around the business domain, then organize each domain internally by layer**. This approach provides the clarity of layered architecture without sacrificing the maintainability and cohesion needed as the system grows.
+
+[1]: https://chanhle.dev/en/blog/layered-n-tier-architecture-guide?utm_source=chatgpt.com "Layered (N-Tier) Architecture: Separation of Concerns in Practice | Chanh Le"
+[2]: https://phauer.com/2020/package-by-feature/?utm_source=chatgpt.com "Package by Feature"
+
